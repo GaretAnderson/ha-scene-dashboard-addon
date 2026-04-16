@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>HA Scene Dashboard</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #121212;
+      color: #e0e0e0;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      min-height: 100vh;
+      padding: 2rem;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+
+    h1 { font-size: 1.8rem; font-weight: 600; }
+
+    #status-indicator {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.85rem;
+      padding: 0.3rem 0.8rem;
+      border-radius: 999px;
+      background: #1e1e1e;
+    }
+
+    #status-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: #555;
+      transition: background 0.3s;
+    }
+    #status-dot.online  { background: #4caf50; }
+    #status-dot.offline { background: #f44336; }
+
+    #scenes-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 1.2rem;
+    }
+
+    .scene-card {
+      background: #1e1e2e;
+      border: 1px solid #2a2a3e;
+      border-radius: 12px;
+      padding: 1.4rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+      transition: transform 0.15s, box-shadow 0.15s;
+    }
+    .scene-card:hover { transform: translateY(-2px); box-shadow: 0 4px 20px rgba(0,0,0,0.4); }
+
+    .scene-icon { font-size: 2.2rem; }
+
+    .scene-name {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: #c9d1d9;
+    }
+
+    .scene-entity {
+      font-size: 0.75rem;
+      color: #6e7681;
+      font-family: monospace;
+    }
+
+    .activate-btn {
+      margin-top: auto;
+      padding: 0.5rem 1rem;
+      background: #6e40c9;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      font-weight: 500;
+      transition: background 0.2s, opacity 0.2s;
+    }
+    .activate-btn:hover  { background: #8b5cf6; }
+    .activate-btn:active { opacity: 0.8; }
+    .activate-btn:disabled { background: #333; cursor: not-allowed; }
+
+    #loading { text-align: center; color: #555; font-size: 1.1rem; padding: 4rem; }
+    #error-msg { color: #f44336; text-align: center; padding: 2rem; }
+
+    /* Toast */
+    #toast {
+      position: fixed;
+      bottom: 2rem; left: 50%;
+      transform: translateX(-50%) translateY(100px);
+      background: #323244;
+      color: #e0e0e0;
+      padding: 0.8rem 1.6rem;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      transition: transform 0.3s ease;
+      z-index: 9999;
+      pointer-events: none;
+    }
+    #toast.show { transform: translateX(-50%) translateY(0); }
+    #toast.success { border-left: 4px solid #4caf50; }
+    #toast.error   { border-left: 4px solid #f44336; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>🏠 Scene Dashboard</h1>
+  <div id="status-indicator">
+    <span id="status-dot"></span>
+    <span id="status-text">Connecting…</span>
+  </div>
+</header>
+
+<div id="loading">Loading scenes…</div>
+<div id="error-msg" style="display:none"></div>
+<div id="scenes-grid" style="display:none"></div>
+
+<div id="toast"></div>
+
+<script>
+  // Determine base path for ingress — HA sets X-Ingress-Path header
+  // and the page is served behind /api/hassio_ingress/<token>/
+  // All fetch calls use relative paths, which work correctly behind ingress.
+  const BASE = '';
+
+  function sceneIcon(name) {
+    const n = name.toLowerCase();
+    if (n.includes('day') || n.includes('morning') || n.includes('sun')) return '☀️';
+    if (n.includes('night') || n.includes('bed') || n.includes('sleep')) return '🌙';
+    if (n.includes('evening') || n.includes('dusk') || n.includes('dim')) return '🌆';
+    if (n.includes('movie') || n.includes('cinema')) return '🎬';
+    if (n.includes('party') || n.includes('color')) return '🎉';
+    return '💡';
+  }
+
+  function showToast(msg, type = 'success') {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.className = `show ${type}`;
+    setTimeout(() => { t.className = ''; }, 3000);
+  }
+
+  async function loadScenes() {
+    try {
+      const res = await fetch(`${BASE}/api/states`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const states = await res.json();
+      const scenes = states.filter(s => s.entity_id.startsWith('scene.'));
+      renderScenes(scenes);
+      setStatus(true);
+    } catch (err) {
+      setStatus(false);
+      document.getElementById('loading').style.display = 'none';
+      const e = document.getElementById('error-msg');
+      e.textContent = `Failed to load scenes: ${err.message}`;
+      e.style.display = 'block';
+    }
+  }
+
+  function renderScenes(scenes) {
+    document.getElementById('loading').style.display = 'none';
+    const grid = document.getElementById('scenes-grid');
+    grid.style.display = 'grid';
+    grid.innerHTML = '';
+
+    for (const scene of scenes) {
+      const name = scene.attributes?.friendly_name || scene.entity_id;
+      const icon = sceneIcon(name);
+      const card = document.createElement('div');
+      card.className = 'scene-card';
+      card.dataset.entityId = scene.entity_id;
+      card.innerHTML = `
+        <div class="scene-icon">${icon}</div>
+        <div class="scene-name">${name}</div>
+        <div class="scene-entity">${scene.entity_id}</div>
+        <button class="activate-btn" data-entity="${scene.entity_id}">Activate</button>
+      `;
+      grid.appendChild(card);
+    }
+
+    grid.querySelectorAll('.activate-btn').forEach(btn => {
+      btn.addEventListener('click', () => activateScene(btn.dataset.entity, btn));
+    });
+  }
+
+  async function activateScene(entityId, btn) {
+    btn.disabled = true;
+    try {
+      const res = await fetch(`${BASE}/api/services/scene/turn_on`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entity_id: entityId }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      showToast('Scene activated!', 'success');
+    } catch (err) {
+      showToast(`Error: ${err.message}`, 'error');
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function setStatus(online) {
+    const dot = document.getElementById('status-dot');
+    const txt = document.getElementById('status-text');
+    dot.className = online ? 'online' : 'offline';
+    txt.textContent = online ? 'Connected' : 'Offline';
+  }
+
+  loadScenes();
+</script>
+</body>
+</html>

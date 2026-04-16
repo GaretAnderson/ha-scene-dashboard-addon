@@ -1,0 +1,15 @@
+name: "HA Scene Dashboard"
+description: "Web dashboard for controlling Home Assistant scenes"
+version: "1.0.0"
+slug: "ha_scene_dashboard"
+init: false
+arch:
+  - amd64
+  - armhf
+  - armv7
+  - aarch64
+ingress: true
+ingress_port: 3000
+panel_icon: mdi:view-dashboard
+panel_title: "Scene Dashboard"
+homeassistant_api: true
